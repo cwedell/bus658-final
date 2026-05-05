@@ -201,14 +201,6 @@ window.Charts = (function(){
         y: { ...COMMON_OPTS.scales.y, beginAtZero: true, title: { display: true, text: 'Revisit ratio', color: '#a89570' } } } },
     });
 
-    /* scatter removed */
-    if(false){new Chart(null,{
-      type: 'scatter',
-      data: buildScatter(state),
-      options: { ...COMMON_OPTS, scales: {
-        x: { ...COMMON_OPTS.scales.x, beginAtZero: true, title: { display: true, text: 'Invalid-move rate', color: '#a89570' } },
-        y: { ...COMMON_OPTS.scales.y, beginAtZero: true, max: 1, title: { display: true, text: 'Efficiency', color: '#a89570' } } } },
-    });
   }
 
   return { renderAll, destroyAll };
