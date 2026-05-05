@@ -24,13 +24,14 @@ window.Charts = (function(){
     return ys.reduce((a,b)=>a+b,0) / ys.length;
   }
 
+  function getResults(state){return state.activeTab==='smell'?state.smell:state.baseline;}
   function buildEfficiencyBySize(state) {
     const sizes = [6, 7, 8];
     const datasets = window.MODEL_KEYS.map(k => {
       const data = sizes.map(sz => {
         const recs = window.MAZE_SPECS
           .filter(m => m.size === sz)
-          .map(m => state.results[k] && state.results[k][m.name])
+          .map(m => getResults(state)[k] && getResults(state)[k][m.name])
           .filter(Boolean);
         const v = meanBy(recs, r => r.solved ? r.efficiency : 0);
         return v;
@@ -56,7 +57,7 @@ window.Charts = (function(){
       data: sizes.map(sz => {
         const recs = window.MAZE_SPECS
           .filter(m => m.size === sz)
-          .map(m => state.results[k] && state.results[k][m.name])
+          .map(m => getResults(state)[k] && getResults(state)[k][m.name])
           .filter(Boolean);
         if (!recs.length) return null;
         return recs.filter(r => r.solved).length / recs.length;
@@ -73,7 +74,7 @@ window.Charts = (function(){
     const optimal = {
       label: 'Optimal',
       data: window.MAZE_SPECS.map(m => m.shortest),
-      borderColor: 'rgba(255,250,210,0.55)',
+      borderColor: 'rgba(60,80,40,0.45)',
       borderDash: [4, 4],
       borderWidth: 2,
       pointRadius: 0,
@@ -82,7 +83,7 @@ window.Charts = (function(){
     const datasets = [optimal, ...window.MODEL_KEYS.map(k => ({
       label: modelLabel(k),
       data: window.MAZE_SPECS.map(m => {
-        const r = state.results[k] && state.results[k][m.name];
+        const r = getResults(state)[k] && getResults(state)[k][m.name];
         return r ? r.steps : null;
       }),
       borderColor: modelColor(k),
@@ -100,7 +101,7 @@ window.Charts = (function(){
     const datasets = window.MODEL_KEYS.map(k => ({
       label: modelLabel(k),
       data: window.MAZE_SPECS.map(m => {
-        const r = state.results[k] && state.results[k][m.name];
+        const r = getResults(state)[k] && getResults(state)[k][m.name];
         return r ? Math.max(0, r.efficiency) : 0;
       }),
       borderColor: modelColor(k),
@@ -118,7 +119,7 @@ window.Charts = (function(){
       data: sizes.map(sz => {
         const recs = window.MAZE_SPECS
           .filter(m => m.size === sz)
-          .map(m => state.results[k] && state.results[k][m.name])
+          .map(m => getResults(state)[k] && getResults(state)[k][m.name])
           .filter(Boolean);
         return meanBy(recs, r => r.steps ? r.revisits / r.steps : 0);
       }),
@@ -127,46 +128,25 @@ window.Charts = (function(){
     return { labels: sizes.map(s => `${s}×${s}`), datasets };
   }
 
-  function buildScatter(state) {
-    const datasets = window.MODEL_KEYS.map(k => {
-      const pts = [];
-      for (const m of window.MAZE_SPECS) {
-        const r = state.results[k] && state.results[k][m.name];
-        if (!r) continue;
-        // x = invalid_moves rate (proxy for ignoring smell), y = efficiency
-        const invRate = r.steps ? r.invalid_moves / r.steps : 0;
-        pts.push({ x: invRate, y: r.efficiency, maze: m.name });
-      }
-      return {
-        label: modelLabel(k),
-        data: pts,
-        backgroundColor: modelColor(k),
-        borderColor: modelColor(k),
-        pointRadius: 5,
-        pointHoverRadius: 7,
-      };
-    });
-    return { datasets };
-  }
 
   const COMMON_OPTS = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
       legend: {
-        labels: { color: '#d8c8a0', font: { family: 'JetBrains Mono, monospace', size: 10 } },
+        labels: { color: '#3a5a2a', font: { family: 'DM Sans, sans-serif', size: 11 } },
       },
       tooltip: {
-        backgroundColor: '#1a140e',
-        titleColor: '#e8c060',
-        bodyColor: '#f0e2c4',
-        borderColor: '#3a2a1a',
+        backgroundColor: '#ffffff',
+        titleColor: '#2a4a1a',
+        bodyColor: '#4a6a3a',
+        borderColor: '#b8d4a0',
         borderWidth: 1,
       },
     },
     scales: {
-      x: { ticks: { color: '#a89570', font: { family: 'JetBrains Mono, monospace', size: 10 } }, grid: { color: 'rgba(168,149,112,0.12)' } },
-      y: { ticks: { color: '#a89570', font: { family: 'JetBrains Mono, monospace', size: 10 } }, grid: { color: 'rgba(168,149,112,0.12)' } },
+      x: { ticks: { color: '#5a7a4a', font: { family: 'DM Sans, sans-serif', size: 11 } }, grid: { color: 'rgba(90,120,70,0.1)' } },
+      y: { ticks: { color: '#5a7a4a', font: { family: 'DM Sans, sans-serif', size: 11 } }, grid: { color: 'rgba(90,120,70,0.1)' } },
     },
   };
 
@@ -204,9 +184,9 @@ window.Charts = (function(){
         plugins: COMMON_OPTS.plugins,
         scales: {
           r: {
-            angleLines: { color: 'rgba(168,149,112,0.18)' },
-            grid: { color: 'rgba(168,149,112,0.18)' },
-            pointLabels: { color: '#d8c8a0', font: { family: 'JetBrains Mono, monospace', size: 9 } },
+            angleLines: { color: 'rgba(90,120,70,0.2)' },
+            grid: { color: 'rgba(90,120,70,0.2)' },
+            pointLabels: { color: '#3a5a2a', font: { family: 'DM Sans, sans-serif', size: 9 } },
             ticks: { display: false, beginAtZero: true, max: 1 },
             min: 0, max: 1,
           },
@@ -221,7 +201,8 @@ window.Charts = (function(){
         y: { ...COMMON_OPTS.scales.y, beginAtZero: true, title: { display: true, text: 'Revisit ratio', color: '#a89570' } } } },
     });
 
-    charts.scatter = new Chart(ctx('chart-scatter'), {
+    /* scatter removed */
+    if(false){new Chart(null,{
       type: 'scatter',
       data: buildScatter(state),
       options: { ...COMMON_OPTS, scales: {

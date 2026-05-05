@@ -2,7 +2,9 @@
 (function(){
   const state = {
     mazes: window.MAZE_SPECS.map(window.parseMaze),
-    results: {},   // results[model][maze] = record
+    baseline: {},
+    smell: {},
+    activeTab: 'baseline',
     activeMaze: '6x6-1',
     activeModel: 'claude-sonnet-4-5',
     raceMode: true,
@@ -43,11 +45,14 @@
     }).join('');
   }
 
+  function activeResults() {
+    return state.activeTab === 'smell' ? state.smell : state.baseline;
+  }
   function activeMaze() {
     return state.mazes.find(m => m.name === state.activeMaze);
   }
   function activeRecord() {
-    return state.results[state.activeModel] && state.results[state.activeModel][state.activeMaze];
+    const res = activeResults(); return res[state.activeModel] && res[state.activeModel][state.activeMaze];
   }
 
   let baseCanvas = null;
@@ -74,7 +79,7 @@
       // Show ALL models simultaneously, each with its trail and minotaur
       // Draw trails (under all tokens)
       for (const k of window.MODEL_KEYS) {
-        const r = state.results[k] && state.results[k][state.activeMaze];
+        const r = activeResults()[k] && activeResults()[k][state.activeMaze];
         if (!r || !r.trajectory) continue;
         const isActive = k === state.activeModel;
         window.MazeRenderer.drawTrail(
@@ -85,7 +90,7 @@
       // Draw all minotaur tokens at their current step (with small offset to avoid overlap)
       const positions = {};
       for (const k of window.MODEL_KEYS) {
-        const r = state.results[k] && state.results[k][state.activeMaze];
+        const r = activeResults()[k] && activeResults()[k][state.activeMaze];
         if (!r || !r.trajectory) continue;
         const i = Math.min(state.step, r.trajectory.length - 1);
         const pos = r.trajectory[i];
@@ -109,7 +114,8 @@
       });
       const activeRec = activeRecord();
       const activePos = activeRec ? activeRec.trajectory[Math.min(state.step, activeRec.trajectory.length - 1)] : maze.start;
-      updateSmellNeedle(maze, activePos);
+      if (state.activeTab==='smell') updateSmellNeedle(maze, activePos);
+      else { var so=$('smell-overlay'); if(so) so.classList.add('inactive'); }
       updateMetrics(activeRec);
     } else {
       // single-model mode (legacy)
@@ -121,17 +127,18 @@
         );
         const pos = rec.trajectory[Math.min(state.step, rec.trajectory.length - 1)];
         if (pos) window.MazeRenderer.drawMinotaur(ctx, state.activeModel, pos, state.cellPx);
-        updateSmellNeedle(maze, pos);
+        if (state.activeTab==='smell') updateSmellNeedle(maze, pos);
         updateMetrics(rec);
       } else {
         window.MazeRenderer.drawMinotaur(ctx, state.activeModel, maze.start, state.cellPx);
-        updateSmellNeedle(maze, maze.start);
         updateMetrics(null);
       }
     }
   }
 
   function updateSmellNeedle(maze, pos) {
+    var so = $('smell-overlay');
+    if(so) so.classList.remove('inactive');
     if (!pos) return;
     const dx = maze.end[1] - pos[1];
     const dy = maze.end[0] - pos[0];
@@ -147,17 +154,16 @@
     $('m-eff').textContent = rec ? (rec.efficiency * 100).toFixed(0) + '%' : '—';
     const total = rec ? Math.max(1, rec.trajectory.length - 1) : 1;
     $('prog').style.width = `${Math.min(100, (state.step / total) * 100)}%`;
-
-    const meta = $('maze-meta');
     const dest = window.DESTINATIONS[state.activeMaze];
-    meta.textContent = `· ${maze.size}×${maze.size} · optimal ${maze.shortest} · destination ${dest ? dest.emoji + ' ' + dest.name : ''}`;
+    const mm=$('maze-meta'); if(mm) mm.textContent=`· ${maze.size}×${maze.size} · optimal ${maze.shortest}`;
+    const md=$('maze-dest'); if(md) md.textContent=dest?`${dest.emoji} ${dest.name}`:'—';
   }
 
   function refreshModelList() {
     const list = $('model-list');
     list.innerHTML = window.MODEL_KEYS.map(k => {
       const m = window.MINOTAURS[k];
-      const r = state.results[k] && state.results[k][state.activeMaze];
+      const r = activeResults()[k] && activeResults()[k][state.activeMaze];
       const hasData = !!r;
       const eff = r ? (r.efficiency * 100).toFixed(0) + '%' : '—';
       const steps = r ? r.steps : '—';
@@ -190,10 +196,14 @@
     refreshModelList();
     drawFrame();
     if (window.Charts) window.Charts.renderAll(state);
-    const counts = window.MODEL_KEYS.filter(k => state.results[k] && Object.keys(state.results[k]).length).length;
-    const totalCSVs = window.MODEL_KEYS.reduce((s, k) =>
-      s + (state.results[k] ? Object.keys(state.results[k]).length : 0), 0);
-    $('footer-stats').textContent = `${counts}/5 models · ${totalCSVs} runs loaded`;
+    const bCount = (bucket) => window.MODEL_KEYS.reduce((s,k)=>s+(bucket[k]?Object.keys(bucket[k]).length:0),0);
+    const bb=$('badge-baseline'); if(bb) bb.textContent=bCount(state.baseline);
+    const bs=$('badge-smell');    if(bs) bs.textContent=bCount(state.smell);
+    const res=activeResults();
+    const counts=window.MODEL_KEYS.filter(k=>res[k]&&Object.keys(res[k]).length).length;
+    const totalCSVs=bCount(res);
+    const tab=state.activeTab==='smell'?'Smellovision':'Baseline';
+    $('footer-stats').textContent=`${tab} · ${counts}/4 models · ${totalCSVs} runs loaded`;
   }
 
   // ── animation loop ──
@@ -202,7 +212,7 @@
     if (state.raceMode) {
       let m = 0;
       for (const k of window.MODEL_KEYS) {
-        const r = state.results[k] && state.results[k][state.activeMaze];
+        const r = activeResults()[k] && activeResults()[k][state.activeMaze];
         if (r && r.trajectory) m = Math.max(m, r.trajectory.length - 1);
       }
       return m;
@@ -262,6 +272,15 @@
       });
     });
 
+    // tab buttons
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        state.activeTab = b.dataset.tab;
+        document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        state.step = 0; stop(); refreshAll();
+      });
+    });
     // upload zone
     const z = $('upload-zone'), inp = $('upload-input');
     z.addEventListener('click', () => inp.click());
@@ -295,10 +314,8 @@
     setStatus(`Parsing ${files.length} CSV…`);
     try {
       const fresh = await window.CSV.loadFiles(files);
-      for (const k of Object.keys(fresh)) {
-        state.results[k] = state.results[k] || {};
-        Object.assign(state.results[k], fresh[k]);
-      }
+      for (const k of Object.keys(fresh.baseline||{})) { state.baseline[k]=state.baseline[k]||{}; Object.assign(state.baseline[k],fresh.baseline[k]); }
+      for (const k of Object.keys(fresh.smell||{})) { state.smell[k]=state.smell[k]||{}; Object.assign(state.smell[k],fresh.smell[k]); }
       setStatus(`Added ${files.length} CSV`, 'ok');
       refreshAll();
     } catch (e) {
@@ -311,11 +328,10 @@
     $('loader-text').textContent = 'Listing GitHub results folder…';
     setStatus('Loading from GitHub…');
     try {
-      const { results, fileCount } = await window.CSV.loadAllFromGithub((d, t) => {
+      const { baseline, smell, fileCount } = await window.CSV.loadAllFromGithub((d, t) => {
         $('loader-text').textContent = `Fetching CSVs… ${d}/${t}`;
       });
-      state.results = results;
-      const modelCount = Object.keys(results).length;
+      state.baseline = baseline; state.smell = smell;
       if (fileCount === 0) {
         setStatus('No CSVs in GitHub yet — drop files here', 'err');
       } else {
