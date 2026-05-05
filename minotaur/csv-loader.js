@@ -62,8 +62,9 @@ window.CSV = (function(){
   }
 
   // Parse a single CSV text into per-trial result records.
-  function parseCSVText(text, fn) {
+  function parseCSVText(text, fn, folder) {
     let { model, maze } = parseFilename(fn);
+    const isSmellovision = (folder || '') === 'smelly_results';
 
     return new Promise(resolve => {
       Papa.parse(text, {
@@ -173,7 +174,7 @@ window.CSV = (function(){
             record.unique_cells_visited = seen.size;
             record.coverage = seen.size / (mazeData.size * mazeData.size);
           }
-          resolve({ model, maze, record });
+          resolve({ model, maze, record, isSmellovision });
         }
       });
     });
@@ -204,8 +205,7 @@ window.CSV = (function(){
     const res = await fetch(file.download_url);
     if (!res.ok) throw new Error('CSV fetch failed: ' + file.name);
     const text = await res.text();
-    const parsed = await parseCSVText(text, file.name);
-    if (parsed) parsed.isSmellovision = file.folder === 'smelly_results';
+    const parsed = await parseCSVText(text, file.name, file.folder || '');
     return parsed;
   }
 
@@ -220,7 +220,7 @@ window.CSV = (function(){
         try {
           const result = await fetchCSVFile(f);
           if (result && result.model && result.maze) {
-            const bucket = result.isSmellovision ? smell : baseline;
+            const bucket = (result.isSmellovision || f.folder === 'smelly_results') ? smell : baseline;
             bucket[result.model] = bucket[result.model] || {};
             const existing = bucket[result.model][result.maze];
             if (!existing || f.name > existing._fn) {
@@ -237,16 +237,18 @@ window.CSV = (function(){
   }
 
   async function loadFiles(fileList) {
-    const out = {};
+    const baseline = {}, smell = {};
     for (const f of fileList) {
       const text = await f.text();
-      const r = await parseCSVText(text, f.name);
-      if (r) {
-        out[r.model] = out[r.model] || {};
-        out[r.model][r.maze] = r.record;
+      const folder = f.name.toLowerCase().includes('smell') ? 'smelly_results' : 'results';
+      const r = await parseCSVText(text, f.name, folder);
+      if (r && r.model && r.maze) {
+        const bucket = r.isSmellovision ? smell : baseline;
+        bucket[r.model] = bucket[r.model] || {};
+        bucket[r.model][r.maze] = r.record;
       }
     }
-    return out;
+    return { baseline, smell };
   }
 
   return { parseCSVText, listFromGithub, loadAllFromGithub, loadFiles, parseFilename };
