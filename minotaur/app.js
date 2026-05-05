@@ -356,5 +356,10 @@
     loadFromGithub();
   }
 
+    // inject debug panel
+  const dbgEl = document.createElement('pre');
+  dbgEl.id = 'debug-panel';
+  dbgEl.style.cssText = 'position:fixed;bottom:8px;right:8px;background:rgba(0,20,0,0.82);color:#80e080;font-size:10px;padding:8px 12px;border-radius:6px;max-width:500px;z-index:9999;white-space:pre-wrap;display:none;font-family:monospace;';
+  document.body.appendChild(dbgEl);
   document.addEventListener('DOMContentLoaded', boot);
 })();
