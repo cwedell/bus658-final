@@ -245,21 +245,21 @@ window.MAZE_SPECS = [
 
 // Per-maze food destination
 window.DESTINATIONS = {
-  '6x6-1': { name: "Creamy Boys",      emoji: '🍦', awning: '#60a8e0' },
-  '6x6-2': { name: "Fox & Farrow",     emoji: '🍷', awning: '#8b3a6a' },
-  '6x6-3': { name: "Underground Pub",  emoji: '🍺', awning: '#3a2a6a' },
-  '6x6-4': { name: "Good Stuff",       emoji: '🍔', awning: '#c03820' },
-  '6x6-5': { name: "Bruxie's",         emoji: '🧇', awning: '#e09020' },
-  '7x7-1': { name: "Taco Stand",       emoji: '🌮', awning: '#e86030' },
-  '7x7-2': { name: "Urth Caffé",       emoji: '☕', awning: '#5a3820' },
-  '7x7-3': { name: "Costco",           emoji: '🛒', awning: '#1a3a8a' },
-  '7x7-4': { name: "Trader Joe's",     emoji: '🌻', awning: '#c07820' },
-  '7x7-5': { name: "Pollo Inka",       emoji: '🍗', awning: '#c06820' },
-  '8x8-1': { name: "Fusion Sushi",     emoji: '🍣', awning: '#1a6080' },
-  '8x8-2': { name: "Pizza Hut",        emoji: '🍕', awning: '#c01818' },
-  '8x8-3': { name: "Paisano's Pizza",  emoji: '🍕', awning: '#206840' },
-  '8x8-4': { name: "Jack in the Box",  emoji: '🍔', awning: '#e8a020' },
-  '8x8-5': { name: "In-N-Out",         emoji: '🍔', awning: '#c81818' },
+  '6x6-1': { name: "Rosa's Tacos",        emoji: '🌮', awning: '#e86030' },
+  '6x6-2': { name: "Creamy Boys",          emoji: '🍦', awning: '#60a8e0' },
+  '6x6-3': { name: "The Rusty Mug",        emoji: '🍺', awning: '#8b5e2a' },
+  '6x6-4': { name: "Sal's Pizzeria",       emoji: '🍕', awning: '#c03820' },
+  '6x6-5': { name: "Cozy Kettle Diner",    emoji: '☕', awning: '#6b4020' },
+  '7x7-1': { name: "Breadworks Bakery",    emoji: '🥐', awning: '#c89030' },
+  '7x7-2': { name: "Noodle Nook",          emoji: '🍜', awning: '#c06820' },
+  '7x7-3': { name: "Sunrise Diner",        emoji: '🧇', awning: '#e09020' },
+  '7x7-4': { name: "Harbor Sushi",         emoji: '🍣', awning: '#1a6080' },
+  '7x7-5': { name: "Big Benny's Burgers",  emoji: '🍔', awning: '#8b4010' },
+  '8x8-1': { name: "Pappy's Smokehouse",   emoji: '🥩', awning: '#6b2010' },
+  '8x8-2': { name: "Sugar Shack Donuts",   emoji: '🍩', awning: '#c04878' },
+  '8x8-3': { name: "The Wrap Spot",        emoji: '🌯', awning: '#207840' },
+  '8x8-4': { name: "Garden & Fork",        emoji: '🥗', awning: '#3a6820' },
+  '8x8-5': { name: "Falafel Corner",       emoji: '🧆', awning: '#b07820' },
 };
 
 // Parse ASCII maze into a cell graph.
