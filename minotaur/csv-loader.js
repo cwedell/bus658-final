@@ -1,275 +1,257 @@
-// csv-loader.js — complete rewrite, bulletproof
-// Reads from: results/ (baseline) and smelly_results/ (smellovision)
-// Model keys as they appear in filenames: claude-sonnet-4-6, gpt-5.2, gemini-3-pro-preview, deepseek-v3
+// CSV loading: GitHub repo discovery + drag-drop upload + parsing.
+// Filename pattern: {model}_{maze}_{YYYYMMDD}_{HHMMSS}.csv
+// Two formats supported:
+//   A) Summary row: maze, size, solved, steps, shortest_path_length, efficiency,
+//                   invalid_moves, revisits, unique_cells_visited, coverage,
+//                   trajectory (JSON), moves (JSON)
+//   B) Step-by-step: step, row/r, col/c, move/direction, legal, solved, efficiency
 
-window.CSV = (function () {
-
-  const REPO   = 'cwedell/bus658-final';
+window.CSV = (function(){
+  const REPO = 'cwedell/bus658-final';
   const BRANCH = 'master';
-  const FOLDERS = ['results', 'smelly_results'];
+  const RESULTS_FOLDERS = ['results', 'smelly_results'];
 
-  // Map any filename prefix → canonical display key used in window.MINOTAURS
-  const KEY_MAP = {
-    'claude-sonnet-4-6':    'claude-sonnet-4-6',
-    'claude-sonnet-4-5':    'claude-sonnet-4-6',  // treat as same
-    'claude-sonnet':        'claude-sonnet-4-6',
-    'claude':               'claude-sonnet-4-6',
-    'gpt-5.2':              'gpt-5.2',
-    'gpt-5':                'gpt-5.2',
-    'gpt':                  'gpt-5.2',
-    'gemini-3-pro-preview': 'gemini-3-pro-preview',
-    'gemini-3-pro':         'gemini-3-pro-preview',
-    'gemini-3':             'gemini-3-pro-preview',
-    'gemini':               'gemini-3-pro-preview',
-    'deepseek-v3':          'deepseek-v3',
-    'deepseek-r1':          'deepseek-v3',         // treat as same
-    'deepseek':             'deepseek-v3',
-    'talkie':               null,                  // removed — skip
-  };
+  const MODEL_KEYS = ['claude-sonnet-4-6', 'gpt-5.2', 'gemini-3-pro-preview', 'deepseek-v3'];
 
-  // Sorted longest-first so e.g. "gemini-3-pro-preview" matches before "gemini"
-  const KEY_PREFIXES = Object.keys(KEY_MAP).sort((a, b) => b.length - a.length);
-
-  // Parse filename → { model (canonical), maze, isSmellovision }
-  function parseFilename(filename, folder) {
-    const base = filename.replace(/\.csv$/i, '').toLowerCase();
+  function parseFilename(fn) {
+    // Strip extension, search for known model key prefix.
+    const base = fn.replace(/\.csv$/i, '');
     let model = null;
-    for (const prefix of KEY_PREFIXES) {
-      if (base.startsWith(prefix + '_') || base === prefix) {
-        model = KEY_MAP[prefix];
-        break;
-      }
+    for (const k of MODEL_KEYS) {
+      if (base.startsWith(k + '_')) { model = k; break; }
     }
-    // Fallback: grab everything before the maze-size token
     if (!model) {
-      const m = base.match(/^(.+?)_(\d+x\d+-\d+)/i);
-      if (m) model = KEY_MAP[m[1]] || m[1];
+      // Try generic split: lastpart of timestamp pattern
+      const m = base.match(/^(.+?)_(\d?x\d|\dx\d)/i);
+      if (m) model = m[1];
     }
-    if (!model) return null; // skip unknown / removed models
-
-    const mazeMatch = base.match(/(\d+x\d+-\d+)/i);
+    // maze name
+    const mazeMatch = base.match(/(\dx\d-\d)/i);
     const maze = mazeMatch ? mazeMatch[1] : null;
-    if (!maze) return null;
-
-    return { model, maze, isSmellovision: folder === 'smelly_results' };
+    return { model, maze };
   }
 
-  // Safely parse JSON that may use Python tuple syntax: (0,1) → [0,1]
-  function safeJSON(s) {
-    if (s == null || s === '') return null;
+  function safeJsonParse(s) {
+    if (s == null) return null;
     if (typeof s !== 'string') return s;
-    try { return JSON.parse(s); } catch (_) {}
-    try { return JSON.parse(s.replace(/\(/g, '[').replace(/\)/g, ']').replace(/'/g, '"')); } catch (_) {}
-    return null;
-  }
-
-  // Build a record from a single summary row
-  function recordFromRow(row, mazeSpec) {
-    // Normalise keys to lowercase for case-insensitive column access
-    const R = {};
-    for (const [k, v] of Object.entries(row)) R[k.toLowerCase().trim()] = v;
-
-    const steps    = +(R.steps || R.step_count || R.total_steps || 0);
-    const shortest = +(R.shortest_path_length || R.shortest || (mazeSpec && mazeSpec.shortest) || 0);
-    const solvedRaw = String(R.solved || '').toLowerCase();
-    const solved   = solvedRaw === 'true' || solvedRaw === '1' || solvedRaw === 'yes';
-    let efficiency = parseFloat(R.efficiency) || 0;
-    if (!efficiency && solved && steps > 0 && shortest > 0) efficiency = shortest / steps;
-    if (!solved) efficiency = 0; // penalise non-solves
-
-    const trajectory = safeJSON(R.trajectory) || null;
-    const moves      = safeJSON(R.moves)      || null;
-
-    return {
-      steps, shortest, solved, efficiency,
-      invalid_moves: +(R.invalid_moves || 0),
-      revisits:      +(R.revisits || 0),
-      coverage:      parseFloat(R.coverage) || 0,
-      unique_cells_visited: +(R.unique_cells_visited || 0),
-      trajectory, moves,
-    };
-  }
-
-  // Build a record from step-by-step rows (one row per move)
-  function recordFromSteps(rows, mazeSpec) {
-    const traj = [], moves = [];
-    let solved = false, efficiency = 0, steps = 0, invalid = 0;
-
-    for (const rawRow of rows) {
-      const row = {};
-      for (const [k, v] of Object.entries(rawRow)) row[k.toLowerCase().trim()] = v;
-
-      const r = +(row.row ?? row.r ?? row.pos_row ?? NaN);
-      const c = +(row.col ?? row.c ?? row.pos_col ?? NaN);
-      if (!isNaN(r) && !isNaN(c)) traj.push([r, c]);
-
-      const mv = String(row.move_taken || row.move || row.direction || row.action || '').trim().toUpperCase();
-      if (['N','S','E','W'].includes(mv[0])) moves.push(mv[0]);
-
-      const sv = String(row.solved || '').toLowerCase();
-      if (sv === 'true' || sv === '1') solved = true;
-      if (row.efficiency) efficiency = parseFloat(row.efficiency) || efficiency;
-      if (row.total_steps) steps = +row.total_steps || steps;
-      const legal = String(row.legal || '').toLowerCase();
-      if (legal === 'false' || legal === '0') invalid++;
+    try {
+      // Allow Python tuples [(0,0),(1,0)] -> JSON
+      const cleaned = s.replace(/\(/g, '[').replace(/\)/g, ']').replace(/'/g, '"');
+      return JSON.parse(cleaned);
+    } catch (e) {
+      return null;
     }
-
-    steps = steps || moves.length || Math.max(0, traj.length - 1);
-    const shortest = (mazeSpec && mazeSpec.shortest) || 0;
-    if (!efficiency && solved && steps > 0 && shortest > 0) efficiency = shortest / steps;
-    if (!solved) efficiency = 0;
-
-    const seen = new Set(); let revisits = 0;
-    for (const [r,c] of traj) { const k=`${r},${c}`; if(seen.has(k))revisits++; seen.add(k); }
-
-    return {
-      steps, shortest, solved, efficiency,
-      invalid_moves: invalid, revisits,
-      unique_cells_visited: seen.size,
-      coverage: seen.size / ((mazeSpec && mazeSpec.size * mazeSpec.size) || 1),
-      trajectory: traj.length ? traj : null,
-      moves: moves.length ? moves : null,
-    };
   }
 
-  // Main CSV text parser
-  function parseCSVText(text, filename, folder) {
-    const parsed = parseFilename(filename, folder || '');
-    if (!parsed) return Promise.resolve(null);
-    const { model, maze, isSmellovision } = parsed;
+  function normaliseRow(row, mazeData) {
+    // Try to extract steps, solved, efficiency, trajectory, moves
+    const out = {};
+    out.steps = +row.steps || +row.step_count || 0;
+    out.shortest = +row.shortest_path_length || mazeData?.shortest || null;
+    out.efficiency = parseFloat(row.efficiency) || (out.shortest && out.steps ? out.shortest / out.steps : 0);
+    out.solved = String(row.solved).toLowerCase() === 'true' || row.solved === true || row.solved === '1';
+    out.invalid_moves = +row.invalid_moves || 0;
+    out.revisits = +row.revisits || 0;
+    out.coverage = parseFloat(row.coverage) || 0;
+    out.unique_cells_visited = +row.unique_cells_visited || 0;
+    const trajRaw = row.trajectory;
+    const movesRaw = row.moves;
+    out.trajectory = safeJsonParse(trajRaw);
+    out.moves = safeJsonParse(movesRaw);
+    return out;
+  }
+
+  // Parse a single CSV text into per-trial result records.
+  function parseCSVText(text, fn, folder) {
+    let { model, maze } = parseFilename(fn);
+    const _isSmell = (folder || '') === 'smelly_results';
 
     return new Promise(resolve => {
-      Papa.parse(text.trim(), {
+      Papa.parse(text, {
         header: true,
         skipEmptyLines: true,
         dynamicTyping: false,
-        complete(res) {
+        complete: (res) => {
           const rows = res.data;
-          if (!rows || !rows.length) { resolve(null); return; }
-
-          // Find matching maze spec for shortest-path reference
-          const mazeSpec = (window.MAZE_SPECS || []).find(m => m.name === maze);
-
-          // Detect format: step-by-step vs summary
-          const fields = (res.meta.fields || []).map(f => f.toLowerCase().trim());
-          const hasPos  = fields.some(f => f === 'row' || f === 'r' || f === 'pos_row');
-          const hasStep = fields.includes('step');
-          const isStepByStep = rows.length > 1 && (hasPos || hasStep);
+          if (!rows.length) { resolve(null); return; }
+          // If filename parsing failed, try to read from CSV columns
+          if (!model && rows[0].model) {
+            const m = String(rows[0].model).toLowerCase().trim();
+            for (const k of MODEL_KEYS) {
+              if (m === k.toLowerCase() || m.startsWith(k.toLowerCase())) { model = k; break; }
+            }
+            if (!model) model = m;
+          }
+          if (!maze && rows[0].maze) maze = String(rows[0].maze).trim();
+          if (!model || !maze) { resolve(null); return; }
+          const mazeSpec = window.MAZE_SPECS.find(m => m.name === maze);
+          if (!mazeSpec) { resolve(null); return; }
+          const mazeData = window.parseMaze(mazeSpec);
+          // Detect format
+          const cols = res.meta.fields.map(f => f.toLowerCase());
+          const hasStepCol = cols.includes('step');
+          const hasPosCol = cols.includes('row') && cols.includes('col');
+          const hasMoveCol = cols.includes('move_taken') || cols.includes('move') || cols.includes('direction') || cols.includes('action');
+          const hasTrajectoryCol = cols.includes('trajectory');
+          // Step-by-step if multiple rows AND (step col or row+col cols)
+          const isStep = rows.length > 1 && (hasStepCol || hasPosCol);
+          const isSummary = !isStep && (cols.includes('steps') || cols.includes('efficiency') || hasTrajectoryCol);
 
           let record;
-          if (isStepByStep) {
-            record = recordFromSteps(rows, mazeSpec);
-          } else {
-            // Summary: could be 1 row or multiple (find the one matching this maze)
-            let targetRow = rows[0];
-            if (rows.length > 1) {
-              const match = rows.find(r => {
-                const mz = String(r.maze || r.Maze || '').toLowerCase();
-                return mz === maze.toLowerCase();
-              });
-              if (match) targetRow = match;
+          if (isStep) {
+            // Build trajectory + moves from each step row
+            const moves = [];
+            const traj = [];
+            let solved = false;
+            let eff = 0;
+            let totalSteps = 0;
+            let invalid = 0;
+            for (const r of rows) {
+              const rr = r.row != null ? +r.row : (r.r != null ? +r.r : null);
+              const cc = r.col != null ? +r.col : (r.c != null ? +r.c : null);
+              if (rr != null && cc != null && !isNaN(rr) && !isNaN(cc)) {
+                traj.push([rr, cc]);
+              }
+              const moveRaw = (r.move_taken || r.move || r.direction || r.action || '').toString().trim();
+              if (moveRaw && moveRaw !== '—' && moveRaw !== '-' && moveRaw !== '') {
+                const dir = moveRaw.toUpperCase().charAt(0);
+                if (['N','S','E','W'].includes(dir)) moves.push(dir);
+              }
+              if (r.solved != null) {
+                const sv = String(r.solved).toLowerCase();
+                if (sv === 'true' || sv === '1') solved = true;
+              }
+              if (r.efficiency) eff = parseFloat(r.efficiency) || eff;
+              if (r.total_steps) totalSteps = +r.total_steps || totalSteps;
+              const legalRaw = r.legal;
+              if (legalRaw != null && String(legalRaw).toLowerCase() === 'false') invalid++;
             }
-            record = recordFromRow(targetRow, mazeSpec);
+            // Compute revisits
+            const seen = new Set();
+            let rv = 0;
+            for (const [rr, cc] of traj) {
+              const k = rr + ',' + cc;
+              if (seen.has(k)) rv++;
+              seen.add(k);
+            }
+            record = {
+              steps: totalSteps || moves.length || (traj.length - 1),
+              shortest: mazeData.shortest,
+              solved,
+              efficiency: eff || (mazeData.shortest && (traj.length - 1) ? mazeData.shortest / (traj.length - 1) : 0),
+              invalid_moves: invalid,
+              revisits: rv,
+              coverage: seen.size / (mazeData.size * mazeData.size),
+              unique_cells_visited: seen.size,
+              moves,
+              trajectory: traj.length ? traj : [mazeData.start.slice()],
+            };
+          } else if (isSummary && rows.length === 1) {
+            record = normaliseRow(rows[0], mazeData);
+          } else if (isSummary && rows.length > 1) {
+            const match = rows.find(r => (r.maze || '').toString().toLowerCase() === maze.toLowerCase()) || rows[0];
+            record = normaliseRow(match, mazeData);
+          } else {
+            record = normaliseRow(rows[0] || {}, mazeData);
           }
-
-          // Reconstruct trajectory from moves if missing
-          if ((!record.trajectory || !record.trajectory.length) && record.moves && record.moves.length && mazeSpec) {
-            const parsedMaze = window.parseMaze(mazeSpec);
-            record.trajectory = window.trajectoryFromMoves(parsedMaze, record.moves);
+          // If no trajectory but moves exist, reconstruct
+          if ((!record.trajectory || !record.trajectory.length) && record.moves && record.moves.length) {
+            record.trajectory = window.trajectoryFromMoves(mazeData, record.moves);
           }
           if (!record.trajectory || !record.trajectory.length) {
-            if (mazeSpec) {
-              const pm = window.parseMaze(mazeSpec);
-              record.trajectory = [pm.start.slice()];
-            }
+            record.trajectory = [mazeData.start.slice()];
           }
-
-          resolve({ model, maze, isSmellovision, record });
-        },
-        error() { resolve(null); }
+          // Compute revisits if missing
+          if (!record.revisits && record.trajectory.length) {
+            const seen = new Set();
+            let rv = 0;
+            for (const [r,c] of record.trajectory) {
+              const k = r + ',' + c;
+              if (seen.has(k)) rv++;
+              seen.add(k);
+            }
+            record.revisits = rv;
+            record.unique_cells_visited = seen.size;
+            record.coverage = seen.size / (mazeData.size * mazeData.size);
+          }
+          resolve({ model, maze, record, isSmellovision: _isSmell });
+        }
       });
     });
   }
 
-  // List all CSVs from both folders via GitHub git tree API
+  // Load list of CSV files in github results folder via the GitHub API.
+  // Falls back to git tree API (1 request, no per-file calls).
   async function listFromGithub() {
-    const url = `https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('GitHub tree API failed: ' + res.status);
-    const json = await res.json();
-
+    const tUrl = `https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
+    const r = await fetch(tUrl);
+    if (!r.ok) throw new Error('GitHub list failed: ' + r.status);
+    const j = await r.json();
     const files = [];
-    for (const item of (json.tree || [])) {
-      if (item.type !== 'blob' || !item.path.toLowerCase().endsWith('.csv')) continue;
-      const folder = FOLDERS.find(f => item.path.startsWith(f + '/'));
+    for (const t of (j.tree || [])) {
+      if (t.type !== 'blob' || !t.path.toLowerCase().endsWith('.csv')) continue;
+      const folder = RESULTS_FOLDERS.find(f => t.path.startsWith(f + '/'));
       if (!folder) continue;
-      const name = item.path.slice(folder.length + 1);
       files.push({
-        name, folder,
-        url: `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${item.path}`,
+        name: t.path.slice(folder.length + 1),
+        folder: folder,
+        download_url: `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${t.path}`
       });
     }
     return files;
   }
 
-  // Fetch one CSV file
-  async function fetchOne(file) {
-    const res = await fetch(file.url);
-    if (!res.ok) return null;
+  async function fetchCSVFile(file) {
+    const url = file.download_url ||
+      `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${RESULTS_PATH}/${file.name}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('CSV fetch failed: ' + file.name);
     const text = await res.text();
-    return parseCSVText(text, file.name, file.folder);
+    return await parseCSVText(text, file.name, file.folder);
   }
 
-  // Load all from GitHub with concurrency
   async function loadAllFromGithub(onProgress) {
     const files = await listFromGithub();
-    const baseline = {}, smell = {};
+    const baseline = {}, smellResults = {};
     let done = 0;
     const queue = [...files];
-
-    const worker = async () => {
+    const workers = Array(6).fill(0).map(async () => {
       while (queue.length) {
         const f = queue.shift();
         try {
-          const result = await fetchOne(f);
+          const result = await fetchCSVFile(f);
           if (result && result.model && result.maze) {
-            const bucket = result.isSmellovision ? smell : baseline;
-            if (!bucket[result.model]) bucket[result.model] = {};
-            // Keep latest by filename if duplicate
+            const bucket = result.isSmellovision ? smellResults : baseline;
+            bucket[result.model] = bucket[result.model] || {};
             const existing = bucket[result.model][result.maze];
-            if (!existing || f.name > (existing._fn || '')) {
+            if (!existing || f.name > existing._fn) {
               bucket[result.model][result.maze] = { ...result.record, _fn: f.name };
             }
           }
-        } catch (e) { console.warn('CSV fetch error:', f.name, e); }
+        } catch (e) { /* skip */ }
         done++;
-        if (onProgress) onProgress(done, files.length);
+        onProgress && onProgress(done, files.length);
       }
-    };
-
-    await Promise.all(Array(6).fill(0).map(worker));
-    console.log(`[CSV] Loaded: baseline=${JSON.stringify(Object.fromEntries(Object.entries(baseline).map(([k,v])=>[k,Object.keys(v).length])))} smell=${JSON.stringify(Object.fromEntries(Object.entries(smell).map(([k,v])=>[k,Object.keys(v).length])))}`);
-    return { baseline, smell, fileCount: files.length };
+    });
+    await Promise.all(workers);
+    console.log('[CSV] baseline:', Object.fromEntries(Object.entries(baseline).map(([k,v])=>[k,Object.keys(v).length])));
+    console.log('[CSV] smell:', Object.fromEntries(Object.entries(smellResults).map(([k,v])=>[k,Object.keys(v).length])));
+    return { results: baseline, smellResults, fileCount: files.length };
   }
 
-  // Load from drag-dropped files
   async function loadFiles(fileList) {
-    const baseline = {}, smell = {};
+    const out = {};
     for (const f of fileList) {
-      try {
-        const text  = await f.text();
-        const folder = f.name.toLowerCase().includes('smell') ? 'smelly_results' : 'results';
-        const result = await parseCSVText(text, f.name, folder);
-        if (result && result.model && result.maze) {
-          const bucket = result.isSmellovision ? smell : baseline;
-          if (!bucket[result.model]) bucket[result.model] = {};
-          bucket[result.model][result.maze] = result.record;
-        }
-      } catch(e) { console.warn('File parse error:', f.name, e); }
+      const text = await f.text();
+      const folder = f.name.toLowerCase().includes('smell') ? 'smelly_results' : 'results';
+      const r = await parseCSVText(text, f.name, folder);
+      if (r && r.model && r.maze) {
+        out[r.model] = out[r.model] || {};
+        out[r.model][r.maze] = r.record;
+      }
     }
-    return { baseline, smell };
+    return out;
   }
 
-  return { parseCSVText, loadAllFromGithub, loadFiles, parseFilename };
-
+  return { parseCSVText, listFromGithub, loadAllFromGithub, loadFiles, parseFilename };
 })();
