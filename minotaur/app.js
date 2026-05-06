@@ -6,7 +6,7 @@
     smell: {},
     activeTab: 'baseline',
     activeMaze: '6x6-1',
-    activeModel: 'claude-sonnet-4-5',
+    activeModel: 'claude-sonnet-4-6',
     raceMode: true,
     speed: 400,
     playing: false,
@@ -46,13 +46,13 @@
   }
 
   function activeResults() {
-    return state.activeTab === 'smell' ? state.smell : state.baseline;
+    return state.activeTab === 'smell' ? (state.smell||{}) : (state.baseline||state.results||{});
   }
   function activeMaze() {
     return state.mazes.find(m => m.name === state.activeMaze);
   }
   function activeRecord() {
-    const res = activeResults(); return res[state.activeModel] && res[state.activeModel][state.activeMaze];
+    const res=activeResults(); return res[state.activeModel] && res[state.activeModel][state.activeMaze];
   }
 
   let baseCanvas = null;
@@ -114,8 +114,9 @@
       });
       const activeRec = activeRecord();
       const activePos = activeRec ? activeRec.trajectory[Math.min(state.step, activeRec.trajectory.length - 1)] : maze.start;
-      if (state.activeTab==='smell') updateSmellNeedle(maze, activePos);
-      else { var so=$('smell-overlay'); if(so) so.classList.add('inactive'); }
+      const so7=$('smell-overlay');
+      if(state.activeTab==='smell'){if(so7)so7.classList.remove('inactive');updateSmellNeedle(maze,activePos);}
+      else{if(so7)so7.classList.add('inactive');}
       updateMetrics(activeRec);
     } else {
       // single-model mode (legacy)
@@ -127,7 +128,7 @@
         );
         const pos = rec.trajectory[Math.min(state.step, rec.trajectory.length - 1)];
         if (pos) window.MazeRenderer.drawMinotaur(ctx, state.activeModel, pos, state.cellPx);
-        if (state.activeTab==='smell') updateSmellNeedle(maze, pos);
+        if(state.activeTab==='smell')updateSmellNeedle(maze,pos);
         updateMetrics(rec);
       } else {
         window.MazeRenderer.drawMinotaur(ctx, state.activeModel, maze.start, state.cellPx);
@@ -137,8 +138,7 @@
   }
 
   function updateSmellNeedle(maze, pos) {
-    var so = $('smell-overlay');
-    if(so) so.classList.remove('inactive');
+    const so=$('smell-overlay'); if(so) so.classList.remove('inactive');
     if (!pos) return;
     const dx = maze.end[1] - pos[1];
     const dy = maze.end[0] - pos[0];
@@ -154,9 +154,10 @@
     $('m-eff').textContent = rec ? (rec.efficiency * 100).toFixed(0) + '%' : '—';
     const total = rec ? Math.max(1, rec.trajectory.length - 1) : 1;
     $('prog').style.width = `${Math.min(100, (state.step / total) * 100)}%`;
-    const dest = window.DESTINATIONS[state.activeMaze];
+
+    const dest9=window.DESTINATIONS[state.activeMaze];
     const mm=$('maze-meta'); if(mm) mm.textContent=`· ${maze.size}×${maze.size} · optimal ${maze.shortest}`;
-    const md=$('maze-dest'); if(md) md.textContent=dest?`${dest.emoji} ${dest.name}`:'—';
+    const md=$('maze-dest'); if(md) md.textContent=dest9?`${dest9.emoji} ${dest9.name}`:'—';
   }
 
   function refreshModelList() {
@@ -196,14 +197,15 @@
     refreshModelList();
     drawFrame();
     if (window.Charts) window.Charts.renderAll(state);
-    const bCount = (bucket) => window.MODEL_KEYS.reduce((s,k)=>s+(bucket[k]?Object.keys(bucket[k]).length:0),0);
-    const bb=$('badge-baseline'); if(bb) bb.textContent=bCount(state.baseline);
-    const bs=$('badge-smell');    if(bs) bs.textContent=bCount(state.smell);
-    const res=activeResults();
-    const counts=window.MODEL_KEYS.filter(k=>res[k]&&Object.keys(res[k]).length).length;
-    const totalCSVs=bCount(res);
-    const tab=state.activeTab==='smell'?'Smellovision':'Baseline';
-    $('footer-stats').textContent=`${tab} · ${counts}/4 models · ${totalCSVs} runs loaded`;
+    const _res=activeResults();
+    const bc=b=>window.MODEL_KEYS.reduce((s,k)=>s+(b[k]?Object.keys(b[k]).length:0),0);
+    const bb=$('badge-baseline');if(bb)bb.textContent=bc(state.baseline||{});
+    const bs=$('badge-smell');if(bs)bs.textContent=bc(state.smell||{});
+    const cnt=window.MODEL_KEYS.filter(k=>_res[k]&&Object.keys(_res[k]).length).length;
+    const tot=bc(_res);
+    const tab10=state.activeTab==='smell'?'Smellovision':'Baseline';
+    $('footer-stats').textContent=`${tab10} · ${cnt}/4 models · ${tot} runs loaded`;
+    if(window.Charts) window.Charts.renderAll(state);
   }
 
   // ── animation loop ──
@@ -263,23 +265,35 @@
     });
     $('btn-play').addEventListener('click', () => state.playing ? stop() : play());
     $('btn-reset').addEventListener('click', () => { stop(); reset(); });
-    document.querySelectorAll('.speed-group button').forEach(b => {
+    document.querySelectorAll('.speed-group button, .spd button').forEach(b => {
       b.addEventListener('click', () => {
-        document.querySelectorAll('.speed-group button').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.speed-group button, .spd button').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
         state.speed = +b.dataset.speed;
-        if (state.playing) play();
+        if (state.playing) { stop(); play(); }
       });
     });
 
-    // tab buttons
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      b.addEventListener('click', () => {
-        state.activeTab = b.dataset.tab;
+    // Tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.activeTab = btn.dataset.tab;
         document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
-        b.classList.add('active');
+        btn.classList.add('active');
         state.step = 0; stop(); refreshAll();
       });
+    });
+    // Step forward / backward
+    const btnFwd = $('btn-step-fwd');
+    const btnBwd = $('btn-step-bwd');
+    if (btnFwd) btnFwd.addEventListener('click', () => {
+      stop();
+      const max = maxStepsForRace();
+      if (state.step < max) { state.step++; drawFrame(); }
+    });
+    if (btnBwd) btnBwd.addEventListener('click', () => {
+      stop();
+      if (state.step > 0) { state.step--; drawFrame(); }
     });
     // upload zone
     const z = $('upload-zone'), inp = $('upload-input');
@@ -314,8 +328,9 @@
     setStatus(`Parsing ${files.length} CSV…`);
     try {
       const fresh = await window.CSV.loadFiles(files);
-      for (const k of Object.keys(fresh.baseline||{})) { state.baseline[k]=state.baseline[k]||{}; Object.assign(state.baseline[k],fresh.baseline[k]); }
-      for (const k of Object.keys(fresh.smell||{})) { state.smell[k]=state.smell[k]||{}; Object.assign(state.smell[k],fresh.smell[k]); }
+      const _fb=fresh.baseline||{}; const _fs=fresh.smell||{};
+      for(const k of Object.keys(_fb)){state.baseline[k]=state.baseline[k]||{};Object.assign(state.baseline[k],_fb[k]);}
+      for(const k of Object.keys(_fs)){state.smell[k]=state.smell[k]||{};Object.assign(state.smell[k],_fs[k]);}
       setStatus(`Added ${files.length} CSV`, 'ok');
       refreshAll();
     } catch (e) {
@@ -331,7 +346,7 @@
       const { baseline, smell, fileCount } = await window.CSV.loadAllFromGithub((d, t) => {
         $('loader-text').textContent = `Fetching CSVs… ${d}/${t}`;
       });
-      state.baseline = baseline; state.smell = smell;
+      state.baseline = baseline||{}; state.smell = smell||{};
       if (fileCount === 0) {
         setStatus('No CSVs in GitHub yet — drop files here', 'err');
       } else {
@@ -356,10 +371,10 @@
     loadFromGithub();
   }
 
-    // inject debug panel
-  const dbgEl = document.createElement('pre');
-  dbgEl.id = 'debug-panel';
-  dbgEl.style.cssText = 'position:fixed;bottom:8px;right:8px;background:rgba(0,20,0,0.82);color:#80e080;font-size:10px;padding:8px 12px;border-radius:6px;max-width:500px;z-index:9999;white-space:pre-wrap;display:none;font-family:monospace;';
-  document.body.appendChild(dbgEl);
+  // Debug panel
+  const _dbg = document.createElement('pre');
+  _dbg.id = 'debug-panel';
+  _dbg.style.cssText = 'position:fixed;bottom:8px;right:8px;background:rgba(0,20,0,0.88);color:#80e080;font-size:10px;padding:8px 12px;border-radius:6px;max-width:480px;z-index:9999;white-space:pre-wrap;display:none;font-family:monospace;pointer-events:none;';
+  document.body.appendChild(_dbg);
   document.addEventListener('DOMContentLoaded', boot);
 })();
