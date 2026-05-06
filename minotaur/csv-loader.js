@@ -9,9 +9,9 @@
 window.CSV = (function(){
   const REPO = 'cwedell/bus658-final';
   const BRANCH = 'master';
-  const RESULTS_FOLDERS = ['results', 'smelly_results'];
+  const RESULTS_PATH = 'results';
 
-  const MODEL_KEYS = ['claude-sonnet-4-6', 'gpt-5.2', 'gemini-3-pro-preview', 'deepseek-v3'];
+  const MODEL_KEYS = ['claude-sonnet-4-5', 'gpt-5.2', 'gemini-3-pro-preview', 'deepseek-r1', 'talkie'];
 
   function parseFilename(fn) {
     // Strip extension, search for known model key prefix.
@@ -62,9 +62,8 @@ window.CSV = (function(){
   }
 
   // Parse a single CSV text into per-trial result records.
-  function parseCSVText(text, fn, folder) {
+  function parseCSVText(text, fn) {
     let { model, maze } = parseFilename(fn);
-    const isSmellovision = (folder || '') === 'smelly_results';
 
     return new Promise(resolve => {
       Papa.parse(text, {
@@ -174,7 +173,7 @@ window.CSV = (function(){
             record.unique_cells_visited = seen.size;
             record.coverage = seen.size / (mazeData.size * mazeData.size);
           }
-          resolve({ model, maze, record, isSmellovision });
+          resolve({ model, maze, record });
         }
       });
     });
@@ -183,48 +182,54 @@ window.CSV = (function(){
   // Load list of CSV files in github results folder via the GitHub API.
   // Falls back to git tree API (1 request, no per-file calls).
   async function listFromGithub() {
+    // Try contents API first
+    try {
+      const url = `https://api.github.com/repos/${REPO}/contents/${RESULTS_PATH}?ref=${BRANCH}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        return data.filter(f => f.name.toLowerCase().endsWith('.csv'));
+      }
+    } catch (e) {}
+    // Fallback: git tree (gives all paths in one call)
     const tUrl = `https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`;
     const r = await fetch(tUrl);
     if (!r.ok) throw new Error('GitHub list failed: ' + r.status);
     const j = await r.json();
-    const files = [];
-    for (const t of (j.tree || [])) {
-      if (t.type !== 'blob' || !t.path.toLowerCase().endsWith('.csv')) continue;
-      const folder = RESULTS_FOLDERS.find(f => t.path.startsWith(f + '/'));
-      if (!folder) continue;
-      files.push({
-        name: t.path.slice(folder.length + 1),
-        folder,
-        download_url: `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${t.path}`,
-      });
-    }
-    return files;
+    return (j.tree || [])
+      .filter(t => t.type === 'blob' &&
+                   t.path.startsWith(RESULTS_PATH + '/') &&
+                   t.path.toLowerCase().endsWith('.csv'))
+      .map(t => ({ name: t.path.slice(RESULTS_PATH.length + 1),
+                   download_url: `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${t.path}` }));
   }
 
   async function fetchCSVFile(file) {
-    const res = await fetch(file.download_url);
+    const url = file.download_url ||
+      `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${RESULTS_PATH}/${file.name}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error('CSV fetch failed: ' + file.name);
     const text = await res.text();
-    const parsed = await parseCSVText(text, file.name, file.folder || '');
-    return parsed;
+    return await parseCSVText(text, file.name);
   }
 
   async function loadAllFromGithub(onProgress) {
     const files = await listFromGithub();
-    const baseline = {}, smell = {};
+    const out = {};
     let done = 0;
+    // Concurrency limit
     const queue = [...files];
     const workers = Array(6).fill(0).map(async () => {
       while (queue.length) {
         const f = queue.shift();
         try {
           const result = await fetchCSVFile(f);
-          if (result && result.model && result.maze) {
-            const bucket = (result.isSmellovision || f.folder === 'smelly_results') ? smell : baseline;
-            bucket[result.model] = bucket[result.model] || {};
-            const existing = bucket[result.model][result.maze];
+          if (result) {
+            out[result.model] = out[result.model] || {};
+            // If multiple CSVs for same maze/model, keep latest by filename timestamp
+            const existing = out[result.model][result.maze];
             if (!existing || f.name > existing._fn) {
-              bucket[result.model][result.maze] = { ...result.record, _fn: f.name };
+              out[result.model][result.maze] = { ...result.record, _fn: f.name };
             }
           }
         } catch (e) { /* skip */ }
@@ -233,26 +238,21 @@ window.CSV = (function(){
       }
     });
     await Promise.all(workers);
-    return { baseline, smell, fileCount: files.length };
+    return { results: out, fileCount: files.length };
   }
 
   async function loadFiles(fileList) {
-    const baseline = {}, smell = {};
+    const out = {};
     for (const f of fileList) {
       const text = await f.text();
-      const folder = f.name.toLowerCase().includes('smell') ? 'smelly_results' : 'results';
-      const r = await parseCSVText(text, f.name, folder);
-      if (r && r.model && r.maze) {
-        const bucket = r.isSmellovision ? smell : baseline;
-        bucket[r.model] = bucket[r.model] || {};
-        bucket[r.model][r.maze] = r.record;
+      const r = await parseCSVText(text, f.name);
+      if (r) {
+        out[r.model] = out[r.model] || {};
+        out[r.model][r.maze] = r.record;
       }
     }
-    return { baseline, smell };
+    return out;
   }
 
   return { parseCSVText, listFromGithub, loadAllFromGithub, loadFiles, parseFilename };
 })();
-
-// Patch: expose RESULTS_FOLDERS and normalise model keys
-if (window.CSV && window.CSV._patch) {}
